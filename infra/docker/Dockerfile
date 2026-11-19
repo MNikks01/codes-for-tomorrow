@@ -41,9 +41,12 @@ CMD ["node_modules/.bin/prisma", "migrate", "deploy"]
 
 # ---- runtime: minimal, non-root, production deps only ------------------------
 FROM node:24-bookworm-slim AS runtime
+# The runtime never uses npm/corepack; removing them drops their bundled CVEs.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends tini \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+  && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 ENV NODE_ENV=production \
   PORT=3000
 WORKDIR /app
