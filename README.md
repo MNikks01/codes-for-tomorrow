@@ -155,6 +155,12 @@ All routes are served under **`/api/v1`** and, to honour the assignment's litera
 | POST   | `/chat/:chatId/message/:messageId/read`    | ✔    | **API 4** – mark read (`userId`?)                                |
 | POST   | `/chat/:chatId/lastseen`                   | ✔    | **API 5** – update last seen (`userId`?, `messageId`)            |
 | GET    | `/user/:userId/chats?limit=&cursor=`       | ✔    | **API 6** – list chats (alias `/users/:userId/chats`)            |
+| POST   | `/chat/group/create`                       | ✔    | **Bonus** – create group (`name`, `memberIds`); caller is OWNER  |
+| PATCH  | `/chat/:chatId`                            | ✔    | **Bonus** – rename group (owner)                                 |
+| POST   | `/chat/:chatId/members`                    | ✔    | **Bonus** – add members (owner, max 100)                         |
+| DELETE | `/chat/:chatId/members/:userId`            | ✔    | **Bonus** – remove member (owner) or leave (self)                |
+| PATCH  | `/chat/:chatId/message/:messageId`         | ✔    | **Bonus** – edit own message (`text`)                            |
+| DELETE | `/chat/:chatId/message/:messageId`         | ✔    | **Bonus** – delete own message (soft, idempotent)                |
 | GET    | `/health`, `/health/live`, `/health/ready` | –    | Probes                                                           |
 
 Response envelope: `{ "success": true, "data": …, "meta": … }` or `{ "success": false, "error": { "code", "message", "details": [] } }`.
@@ -251,13 +257,13 @@ The image (`infra/docker/Dockerfile`) is multi-stage: deterministic `--frozen-lo
 
 ```bash
 pnpm infra:up                # PostgreSQL + Firestore emulator
-pnpm test:unit               # 75 fast tests, no infrastructure
-pnpm test:integration        # 17 tests against real PostgreSQL + emulator
-pnpm test:e2e                # 58 HTTP tests (e2e + security suites)
+pnpm test:unit               # 85 fast tests, no infrastructure
+pnpm test:integration        # 23 tests against real PostgreSQL + emulator
+pnpm test:e2e                # 65 HTTP tests (e2e + security suites)
 pnpm test:coverage           # everything + coverage (thresholds enforced)
 ```
 
-Infrastructure suites use the isolated `chat_test` database (migrated automatically) and random identifiers, so they never touch development data. Current totals: **150 tests, 96.2 % statements / 90.0 % branches / 98.3 % functions / 97.5 % lines**.
+Infrastructure suites use the isolated `chat_test` database (migrated automatically) and random identifiers, so they never touch development data. Current totals: **173 tests, 95.8 % statements / 89.7 % branches / 98.6 % functions / 97.5 % lines**.
 
 ## Code quality
 
@@ -293,11 +299,10 @@ The reference target is **Google Cloud Run + Cloud SQL for PostgreSQL + Firestor
 - Chat-list ordering is keyset-paginated on a mutable key (`last_activity_at`): a chat that becomes active while a client is paging can move to page 1 and be skipped by that client's later pages. This is inherent to "most recent first" and acceptable for chat lists.
 - If the PostgreSQL activity update fails after a successful Firestore write, the chat list ordering lags until the next message or an idempotent retry (documented trade-off; no data loss).
 - Refresh tokens are returned in the response body (API-client friendly). Browser clients should wrap them in an `HttpOnly; Secure; SameSite=Strict` cookie at a BFF.
-- Optional features (group chats, message edit/delete) are not implemented; the schema (`ChatType.GROUP`, `editedAt`, `deletedAt`) is ready for them.
 
 ## Future improvements
 
-Real-time delivery over WebSockets/SSE (or Firestore listeners with custom tokens and member-scoped rules), push notifications via FCM, group chats with roles, message edit/delete with tombstones, attachments via signed Cloud Storage URLs, search via a dedicated index, retention policies with Firestore TTL, OpenTelemetry tracing and Prometheus metrics, Redis-backed rate limiting, and a transactional outbox if more PostgreSQL side-effects are added.
+Real-time delivery over WebSockets/SSE (or Firestore listeners with custom tokens and member-scoped rules), push notifications via FCM, admin roles and moderation for groups, edit history, attachments via signed Cloud Storage URLs, search via a dedicated index, retention policies with Firestore TTL, OpenTelemetry tracing and Prometheus metrics, Redis-backed rate limiting, and a transactional outbox if more PostgreSQL side-effects are added.
 
 ## License
 
