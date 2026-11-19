@@ -1,0 +1,79 @@
+// PostgreSQL is the source of truth for identities, chats and membership.
+// Messages, read receipts and last-seen state live in Firestore (see docs/firestore-schema.md).
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ChatType {
+  DIRECT
+  GROUP
+}
+
+model User {
+  id            String         @id @default(uuid()) @db.Uuid
+  name          String         @db.VarChar(100)
+  /// Always stored lower-cased; uniqueness is therefore case-insensitive.
+  email         String         @unique @db.VarChar(254)
+  passwordHash  String         @map("password_hash")
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  memberships   ChatMember[]
+  refreshTokens RefreshToken[]
+
+  @@map("users")
+}
+
+model Chat {
+  id             String       @id @default(uuid()) @db.Uuid
+  type           ChatType     @default(DIRECT)
+  /// Canonical participant pair "<smallerUuid>:<largerUuid>" for DIRECT chats, NULL otherwise.
+  /// The UNIQUE constraint is what makes concurrent create-or-get race free.
+  directKey      String?      @unique @map("direct_key") @db.VarChar(73)
+  lastMessageId  String?      @map("last_message_id") @db.VarChar(64)
+  lastMessageAt  DateTime?    @map("last_message_at") @db.Timestamptz(3)
+  /// Sort key for chat listing: creation time until the first message, then latest message time.
+  lastActivityAt DateTime     @default(now()) @map("last_activity_at") @db.Timestamptz(3)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  members        ChatMember[]
+
+  @@index([lastActivityAt(sort: Desc), id(sort: Desc)])
+  @@map("chats")
+}
+
+model ChatMember {
+  id       String   @id @default(uuid()) @db.Uuid
+  chatId   String   @map("chat_id") @db.Uuid
+  userId   String   @map("user_id") @db.Uuid
+  joinedAt DateTime @default(now()) @map("joined_at") @db.Timestamptz(3)
+  chat     Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([chatId, userId])
+  @@index([userId, chatId])
+  @@map("chat_members")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  /// SHA-256 of the opaque token; the raw token is never stored.
+  tokenHash String    @unique @map("token_hash") @db.Char(64)
+  /// All tokens produced by rotation from one login share a family; reuse revokes the family.
+  familyId  String    @map("family_id") @db.Uuid
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_tokens")
+}
