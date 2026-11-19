@@ -1,0 +1,93 @@
+# Deployment pipeline for Google Cloud Run (same platform family as Firestore, so the
+# service can use Application Default Credentials instead of a service-account key).
+#
+# Nothing runs until the repository is configured. Required GitHub settings:
+#   Variables: GCP_PROJECT_ID, GCP_REGION, GCP_ARTIFACT_REPO, CLOUD_RUN_SERVICE,
+#              GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_DEPLOY_SERVICE_ACCOUNT,
+#              CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT, CLOUD_SQL_INSTANCE
+#   Secrets (in GCP Secret Manager, referenced by name below):
+#              chat-database-url, chat-jwt-access-secret
+# See docs/deployment.md for the full runbook, migration strategy and rollback.
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_migrations:
+        description: 'Apply pending database migrations before deploying'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build, migrate and deploy
+    runs-on: ubuntu-latest
+    environment: production
+    # Production deploys only from main, and only once the repository is configured.
+    if: github.ref == 'refs/heads/main' && vars.GCP_PROJECT_ID != ''
+    env:
+      REGISTRY: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # Keyless auth via Workload Identity Federation: no long-lived JSON keys in GitHub.
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and push images
+        run: |
+          gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
+          docker build -f infra/docker/Dockerfile --target runtime -t "$REGISTRY/chat-backend:$GITHUB_SHA" .
+          docker build -f infra/docker/Dockerfile --target migrate -t "$REGISTRY/chat-backend-migrate:$GITHUB_SHA" .
+          docker push "$REGISTRY/chat-backend:$GITHUB_SHA"
+          docker push "$REGISTRY/chat-backend-migrate:$GITHUB_SHA"
+
+      - name: Apply migrations (explicit opt-in, additive migrations only)
+        if: inputs.run_migrations
+        run: |
+          gcloud run jobs deploy chat-backend-migrate \
+            --region "${{ vars.GCP_REGION }}" \
+            --image "$REGISTRY/chat-backend-migrate:$GITHUB_SHA" \
+            --set-cloudsql-instances "${{ vars.CLOUD_SQL_INSTANCE }}" \
+            --set-secrets DATABASE_URL=chat-database-url:latest \
+            --service-account "${{ vars.CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}"
+          gcloud run jobs execute chat-backend-migrate --region "${{ vars.GCP_REGION }}" --wait
+
+      - name: Deploy to Cloud Run (no traffic yet)
+        run: |
+          gcloud run deploy "${{ vars.CLOUD_RUN_SERVICE }}" \
+            --region "${{ vars.GCP_REGION }}" \
+            --image "$REGISTRY/chat-backend:$GITHUB_SHA" \
+            --no-traffic --tag "sha-${GITHUB_SHA::7}" \
+            --service-account "${{ vars.CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}" \
+            --set-cloudsql-instances "${{ vars.CLOUD_SQL_INSTANCE }}" \
+            --set-env-vars "NODE_ENV=production,FIREBASE_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},TRUST_PROXY=true" \
+            --set-secrets "DATABASE_URL=chat-database-url:latest,JWT_ACCESS_SECRET=chat-jwt-access-secret:latest"
+
+      - name: Verify the new revision before shifting traffic
+        run: |
+          URL=$(gcloud run services describe "${{ vars.CLOUD_RUN_SERVICE }}" --region "${{ vars.GCP_REGION }}" \
+            --format 'value(status.traffic[].url)' | tr ';' '\n' | grep "sha-${GITHUB_SHA::7}")
+          TOKEN=$(gcloud auth print-identity-token)
+          for i in $(seq 1 10); do
+            if curl -fsS -H "Authorization: Bearer $TOKEN" "$URL/health/ready"; then exit 0; fi
+            sleep 6
+          done
+          echo "New revision never became ready; traffic was not shifted." >&2
+          exit 1
+
+      - name: Shift traffic
+        run: |
+          gcloud run services update-traffic "${{ vars.CLOUD_RUN_SERVICE }}" \
+            --region "${{ vars.GCP_REGION }}" --to-tags "sha-${GITHUB_SHA::7}=100"

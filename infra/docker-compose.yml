@@ -1,0 +1,77 @@
+# Development stack. Credentials below are local-only placeholders.
+# Production uses managed PostgreSQL and real Firestore; see docs/deployment.md.
+name: chat-backend
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: chat
+      POSTGRES_PASSWORD: chat
+      POSTGRES_DB: chat
+    ports:
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../scripts/postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U chat -d chat']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  firestore:
+    build:
+      context: ..
+      dockerfile: infra/docker/firestore-emulator.Dockerfile
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:8080:8080'
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile
+      target: migrate
+    environment:
+      DATABASE_URL: postgresql://chat:chat@postgres:5432/chat
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  app:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile
+      target: runtime
+    restart: unless-stopped
+    # JWT_ACCESS_SECRET (and anything else) comes from the local, git-ignored .env;
+    # the values below override the ones that must differ inside the container network.
+    env_file:
+      - path: ../.env
+        required: true
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      LOG_LEVEL: info
+      DATABASE_URL: postgresql://chat:chat@postgres:5432/chat
+      FIREBASE_PROJECT_ID: demo-chat-backend
+      FIRESTORE_EMULATOR_HOST: firestore:8080
+      CORS_ORIGINS: http://localhost:3000
+      ENABLE_API_DOCS: 'true'
+      TRUST_PROXY: 'false'
+    ports:
+      - '127.0.0.1:3000:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      firestore:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    stop_grace_period: 20s
+
+volumes:
+  pgdata:
