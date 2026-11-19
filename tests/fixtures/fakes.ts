@@ -7,9 +7,10 @@ import type {
   RefreshTokenRepository,
 } from '../../src/modules/auth/auth.types.js';
 import type {
-  ChatAccess,
   ChatListPosition,
+  ChatMembership,
   ChatRepository,
+  ChatType,
   ChatView,
 } from '../../src/modules/chats/chat.types.js';
 import type { Message } from '../../src/modules/messages/message.types.js';
@@ -114,11 +115,22 @@ export class InMemoryChatRepository implements ChatRepository {
   readonly chats = new Map<string, ChatView>();
   activityCalls: { chatId: string; messageId: string; at: Date }[] = [];
 
-  addChat(memberIds: string[], lastActivityAt = new Date()): ChatView {
+  addChat(
+    memberIds: string[],
+    lastActivityAt = new Date(),
+    options: { type?: ChatType; name?: string } = {},
+  ): ChatView {
+    const type = options.type ?? 'DIRECT';
     const chat: ChatView = {
       id: randomUUID(),
-      type: 'DIRECT',
-      members: memberIds.map((userId) => ({ userId, name: 'n', joinedAt: lastActivityAt })),
+      type,
+      name: type === 'GROUP' ? (options.name ?? 'group') : null,
+      members: memberIds.map((userId, index) => ({
+        userId,
+        name: 'n',
+        role: type === 'GROUP' && index === 0 ? 'OWNER' : 'MEMBER',
+        joinedAt: new Date(lastActivityAt.getTime() + index),
+      })),
       lastMessageId: null,
       lastMessageAt: null,
       lastActivityAt,
@@ -135,17 +147,30 @@ export class InMemoryChatRepository implements ChatRepository {
   ): Promise<{ chat: ChatView; created: boolean }> {
     const existing = [...this.chats.values()].find((chat) => {
       const ids = chat.members.map((member) => member.userId);
-      return ids.includes(userAId) && ids.includes(userBId);
+      return chat.type === 'DIRECT' && ids.includes(userAId) && ids.includes(userBId);
     });
     if (existing) return Promise.resolve({ chat: existing, created: false });
     return Promise.resolve({ chat: this.addChat([userAId, userBId]), created: true });
   }
 
-  getAccess(chatId: string, userId: string): Promise<ChatAccess> {
-    const chat = this.chats.get(chatId);
-    if (!chat) return Promise.resolve('CHAT_NOT_FOUND');
+  createGroup(ownerId: string, name: string, memberIds: readonly string[]): Promise<ChatView> {
     return Promise.resolve(
-      chat.members.some((member) => member.userId === userId) ? 'MEMBER' : 'NOT_MEMBER',
+      this.addChat([ownerId, ...memberIds], new Date(), { type: 'GROUP', name }),
+    );
+  }
+
+  findById(chatId: string): Promise<ChatView | null> {
+    return Promise.resolve(this.chats.get(chatId) ?? null);
+  }
+
+  getMembership(chatId: string, userId: string): Promise<ChatMembership> {
+    const chat = this.chats.get(chatId);
+    if (!chat) return Promise.resolve({ status: 'CHAT_NOT_FOUND' });
+    const member = chat.members.find((candidate) => candidate.userId === userId);
+    return Promise.resolve(
+      member
+        ? { status: 'MEMBER', type: chat.type, role: member.role }
+        : { status: 'NOT_MEMBER', type: chat.type },
     );
   }
 
@@ -168,6 +193,41 @@ export class InMemoryChatRepository implements ChatRepository {
     return Promise.resolve({ chats: sorted.slice(0, limit), hasMore: sorted.length > limit });
   }
 
+  renameGroup(chatId: string, name: string): Promise<void> {
+    const chat = this.chats.get(chatId);
+    if (chat) chat.name = name;
+    return Promise.resolve();
+  }
+
+  addMembers(
+    chatId: string,
+    userIds: readonly string[],
+    maxMembers: number,
+  ): Promise<'ADDED' | 'LIMIT_EXCEEDED'> {
+    const chat = this.chats.get(chatId);
+    if (!chat) return Promise.resolve('ADDED');
+    const toAdd = userIds.filter((id) => !chat.members.some((member) => member.userId === id));
+    if (chat.members.length + toAdd.length > maxMembers) return Promise.resolve('LIMIT_EXCEEDED');
+    for (const userId of toAdd) {
+      chat.members.push({ userId, name: 'n', role: 'MEMBER', joinedAt: new Date() });
+    }
+    return Promise.resolve('ADDED');
+  }
+
+  removeMember(chatId: string, userId: string): Promise<'REMOVED' | 'NOT_MEMBER' | 'CHAT_DELETED'> {
+    const chat = this.chats.get(chatId);
+    const member = chat?.members.find((candidate) => candidate.userId === userId);
+    if (!chat || !member) return Promise.resolve('NOT_MEMBER');
+    chat.members = chat.members.filter((candidate) => candidate !== member);
+    const successor = chat.members[0];
+    if (!successor) {
+      this.chats.delete(chatId);
+      return Promise.resolve('CHAT_DELETED');
+    }
+    if (member.role === 'OWNER') successor.role = 'OWNER';
+    return Promise.resolve('REMOVED');
+  }
+
   recordMessageActivity(chatId: string, messageId: string, at: Date): Promise<void> {
     this.activityCalls.push({ chatId, messageId, at });
     return Promise.resolve();
@@ -185,6 +245,7 @@ export function makeMessage(overrides: Partial<Message> = {}): Message {
     createdAt,
     updatedAt: createdAt,
     editedAt: null,
+    deletedAt: null,
     position: { seconds: Math.floor(createdAt.getTime() / 1000), nanos: 0, id },
     ...overrides,
   };

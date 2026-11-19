@@ -8,7 +8,7 @@ export const MESSAGE_MAX_LENGTH = 4000;
  * clients must escape it when rendering. NFC normalisation keeps lengths and
  * equality checks (idempotent retries) consistent across platforms.
  */
-const messageTextSchema = z
+export const messageTextSchema = z
   .string()
   .transform((value) => value.normalize('NFC').trim())
   .pipe(
@@ -43,3 +43,5 @@ export const lastSeenBodySchema = z.strictObject({
   userId: uuidSchema.optional(),
   messageId: messageIdSchema,
 });
+
+export const editMessageBodySchema = z.strictObject({ text: messageTextSchema });

@@ -5,6 +5,7 @@ import { pageQuerySchema } from '../../shared/validation/common.schema.js';
 import { parseInput } from '../../shared/validation/parse.js';
 import { chatParamsSchema } from '../chats/chat.schema.js';
 import {
+  editMessageBodySchema,
   idempotencyKeySchema,
   lastSeenBodySchema,
   markReadBodySchema,
@@ -53,6 +54,20 @@ export class MessageController {
     sendSuccess(res, { ...receipt, created }, { status: created ? 201 : 200 });
   };
 
+  edit = async (req: Request, res: Response): Promise<void> => {
+    const actor = requireAuth(req);
+    const { chatId, messageId } = parseInput(messageParamsSchema, req.params, 'params');
+    const { text } = parseInput(editMessageBodySchema, req.body, 'body');
+    sendSuccess(res, toMessageDto(await this.messages.edit(actor.userId, chatId, messageId, text)));
+  };
+
+  delete = async (req: Request, res: Response): Promise<void> => {
+    const actor = requireAuth(req);
+    const { chatId, messageId } = parseInput(messageParamsSchema, req.params, 'params');
+    await this.messages.delete(actor.userId, chatId, messageId);
+    res.status(204).end();
+  };
+
   updateLastSeen = async (req: Request, res: Response): Promise<void> => {
     const actor = requireAuth(req);
     const { chatId } = parseInput(chatParamsSchema, req.params, 'params');
@@ -62,14 +77,20 @@ export class MessageController {
   };
 }
 
-function toMessageDto(message: Message): Omit<Message, 'position'> {
+interface MessageDto extends Omit<Message, 'position' | 'text'> {
+  /** null for deleted messages (tombstones). */
+  text: string | null;
+}
+
+function toMessageDto(message: Message): MessageDto {
   return {
     id: message.id,
     chatId: message.chatId,
     senderId: message.senderId,
-    text: message.text,
+    text: message.deletedAt ? null : message.text,
     createdAt: message.createdAt,
     updatedAt: message.updatedAt,
     editedAt: message.editedAt,
+    deletedAt: message.deletedAt,
   };
 }

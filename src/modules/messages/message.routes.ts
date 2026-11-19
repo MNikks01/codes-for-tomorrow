@@ -10,5 +10,7 @@ export function createMessageRouter(
   router.get('/chat/:chatId/messages', authenticate, controller.list);
   router.post('/chat/:chatId/message/:messageId/read', authenticate, controller.markRead);
   router.post('/chat/:chatId/lastseen', authenticate, controller.updateLastSeen);
+  router.patch('/chat/:chatId/message/:messageId', authenticate, controller.edit);
+  router.delete('/chat/:chatId/message/:messageId', authenticate, controller.delete);
   return router;
 }

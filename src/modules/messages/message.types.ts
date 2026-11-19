@@ -17,8 +17,17 @@ export interface Message {
   createdAt: Date;
   updatedAt: Date;
   editedAt: Date | null;
+  /** Soft-delete tombstone: the message keeps its place in history but its text is erased. */
+  deletedAt: Date | null;
   position: MessagePosition;
 }
+
+/** Outcome of an edit/delete; business meaning is decided by the service, not the store. */
+export type MessageMutation =
+  | { status: 'OK'; message: Message }
+  | { status: 'ALREADY_DELETED'; message: Message }
+  | { status: 'NOT_FOUND' }
+  | { status: 'NOT_SENDER' };
 
 export interface CreateMessageInput {
   chatId: string;
@@ -37,6 +46,10 @@ export interface MessageStore {
   create(input: CreateMessageInput): Promise<{ message: Message; created: boolean }>;
   findById(chatId: string, messageId: string): Promise<Message | null>;
   listBefore(chatId: string, limit: number, before?: MessagePosition): Promise<MessagePage>;
+  /** Atomically replaces the text if `editorId` sent the message and it is not deleted. */
+  edit(chatId: string, messageId: string, editorId: string, text: string): Promise<MessageMutation>;
+  /** Atomically tombstones the message if `actorId` sent it. */
+  softDelete(chatId: string, messageId: string, actorId: string): Promise<MessageMutation>;
 }
 
 export interface ReadReceipt {

@@ -15,6 +15,8 @@ const unavailableStore: MessageStore = {
   create: unavailable,
   findById: unavailable,
   listBefore: unavailable,
+  edit: unavailable,
+  softDelete: unavailable,
 };
 
 describe('health endpoints', () => {

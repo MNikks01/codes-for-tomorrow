@@ -21,6 +21,8 @@ describe('MessageService', () => {
     create: Mock<MessageStore['create']>;
     findById: Mock<MessageStore['findById']>;
     listBefore: Mock<MessageStore['listBefore']>;
+    edit: Mock<MessageStore['edit']>;
+    softDelete: Mock<MessageStore['softDelete']>;
   };
   let markRead: Mock<ReceiptStore['markRead']>;
   let advance: Mock<LastSeenStore['advance']>;
@@ -35,7 +37,13 @@ describe('MessageService', () => {
     alice = randomUUID();
     bob = randomUUID();
     chatId = chats.addChat([alice, bob]).id;
-    messageStore = { create: vi.fn(), findById: vi.fn(), listBefore: vi.fn() };
+    messageStore = {
+      create: vi.fn(),
+      findById: vi.fn(),
+      listBefore: vi.fn(),
+      edit: vi.fn(),
+      softDelete: vi.fn(),
+    };
     markRead = vi.fn();
     advance = vi.fn();
     logger = { warn: vi.fn() };

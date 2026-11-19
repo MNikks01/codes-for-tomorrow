@@ -162,7 +162,13 @@ describe('sensitive data exposure', () => {
 
   it('hides internal error details behind a generic 500', async () => {
     const boom = () => Promise.reject(new Error('SELECT * FROM secrets -- internal detail'));
-    const failingStore: MessageStore = { create: boom, findById: boom, listBefore: boom };
+    const failingStore: MessageStore = {
+      create: boom,
+      findById: boom,
+      listBefore: boom,
+      edit: boom,
+      softDelete: boom,
+    };
     const failing = createTestApp({ overrides: { messageStore: failingStore } });
     const [a, b] = await Promise.all([registerUser(failing.app), registerUser(failing.app)]);
     const chat = await createChat(failing.app, a, b);

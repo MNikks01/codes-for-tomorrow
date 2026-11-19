@@ -65,9 +65,18 @@ describe('PrismaChatRepository', () => {
   it('reports membership precisely', async () => {
     const [a, b, outsider] = await Promise.all([newUser(), newUser(), newUser()]);
     const { chat } = await chats.createOrGetDirect(a.id, b.id);
-    await expect(chats.getAccess(chat.id, a.id)).resolves.toBe('MEMBER');
-    await expect(chats.getAccess(chat.id, outsider.id)).resolves.toBe('NOT_MEMBER');
-    await expect(chats.getAccess(randomUUID(), a.id)).resolves.toBe('CHAT_NOT_FOUND');
+    await expect(chats.getMembership(chat.id, a.id)).resolves.toEqual({
+      status: 'MEMBER',
+      type: 'DIRECT',
+      role: 'MEMBER',
+    });
+    await expect(chats.getMembership(chat.id, outsider.id)).resolves.toEqual({
+      status: 'NOT_MEMBER',
+      type: 'DIRECT',
+    });
+    await expect(chats.getMembership(randomUUID(), a.id)).resolves.toEqual({
+      status: 'CHAT_NOT_FOUND',
+    });
   });
 
   it('lists by recent activity with stable keyset pagination', async () => {

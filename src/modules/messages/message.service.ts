@@ -1,6 +1,6 @@
 import type { Logger } from 'pino';
 import { z } from 'zod';
-import { AuthorizationError, NotFoundError } from '../../shared/errors/app-error.js';
+import { AuthorizationError, ConflictError, NotFoundError } from '../../shared/errors/app-error.js';
 import { decodeCursor, encodeCursor } from '../../shared/pagination/cursor.js';
 import { messageIdSchema } from '../../shared/validation/common.schema.js';
 import type { ChatService } from '../chats/chat.service.js';
@@ -100,6 +100,31 @@ export class MessageService {
     await this.chats.assertMember(chatId, actorId);
     const message = await this.requireMessage(chatId, input.messageId);
     return this.lastSeen.advance(chatId, actorId, message);
+  }
+
+  async edit(actorId: string, chatId: string, messageId: string, text: string): Promise<Message> {
+    await this.chats.assertMember(chatId, actorId);
+    const result = await this.messages.edit(chatId, messageId, actorId, text);
+    switch (result.status) {
+      case 'OK':
+        return result.message;
+      case 'ALREADY_DELETED':
+        throw new ConflictError('Deleted messages cannot be edited');
+      case 'NOT_SENDER':
+        throw new AuthorizationError('You can only edit your own messages');
+      case 'NOT_FOUND':
+        throw new NotFoundError('Message');
+    }
+  }
+
+  /** Idempotent: deleting an already deleted message succeeds. */
+  async delete(actorId: string, chatId: string, messageId: string): Promise<void> {
+    await this.chats.assertMember(chatId, actorId);
+    const result = await this.messages.softDelete(chatId, messageId, actorId);
+    if (result.status === 'NOT_SENDER') {
+      throw new AuthorizationError('You can only delete your own messages');
+    }
+    if (result.status === 'NOT_FOUND') throw new NotFoundError('Message');
   }
 
   /** Messages live under their chat's path, so a lookup scoped to chatId proves ownership. */

@@ -13,6 +13,7 @@ import { ConflictError } from '../../shared/errors/app-error.js';
 import type {
   CreateMessageInput,
   Message,
+  MessageMutation,
   MessagePage,
   MessagePosition,
   MessageStore,
@@ -29,6 +30,7 @@ const messageDocSchema = z.object({
   createdAt: timestamp,
   updatedAt: timestamp,
   editedAt: timestamp.nullable(),
+  deletedAt: timestamp.nullable().default(null),
 });
 
 /** chats/{chatId}/messages/{messageId} */
@@ -92,6 +94,63 @@ export class FirestoreMessageStore implements MessageStore {
     });
   }
 
+  edit(
+    chatId: string,
+    messageId: string,
+    editorId: string,
+    text: string,
+  ): Promise<MessageMutation> {
+    return this.mutate(chatId, messageId, editorId, (current) =>
+      current.deletedAt
+        ? null
+        : { text, editedAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() },
+    );
+  }
+
+  softDelete(chatId: string, messageId: string, actorId: string): Promise<MessageMutation> {
+    return this.mutate(chatId, messageId, actorId, (current) =>
+      current.deletedAt
+        ? null
+        : {
+            text: '',
+            deletedAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+    );
+  }
+
+  /**
+   * Read-check-write in a transaction so concurrent edits/deletes cannot interleave
+   * (e.g. an edit landing after a delete would resurrect the text).
+   * `change` returns null when the message is already deleted.
+   */
+  private async mutate(
+    chatId: string,
+    messageId: string,
+    actorId: string,
+    change: (current: Message) => Record<string, unknown> | null,
+  ): Promise<MessageMutation> {
+    return withFirestore(async () => {
+      const ref = this.collection(chatId).doc(messageId);
+      const outcome = await this.db.runTransaction(
+        async (tx): Promise<'OK' | 'ALREADY_DELETED' | 'NOT_FOUND' | 'NOT_SENDER'> => {
+          const snapshot = await tx.get(ref);
+          if (!snapshot.exists) return 'NOT_FOUND';
+          const current = toMessage(snapshot);
+          if (current.senderId !== actorId) return 'NOT_SENDER';
+          const update = change(current);
+          if (!update) return 'ALREADY_DELETED';
+          tx.update(ref, update);
+          return 'OK';
+        },
+      );
+      if (outcome === 'NOT_FOUND' || outcome === 'NOT_SENDER') return { status: outcome };
+      const message = await this.read(ref);
+      if (!message) return { status: 'NOT_FOUND' };
+      return { status: outcome, message };
+    });
+  }
+
   private collection(chatId: string): CollectionReference {
     return this.db.collection('chats').doc(chatId).collection('messages');
   }
@@ -112,6 +171,7 @@ function toMessage(snapshot: DocumentSnapshot): Message {
     createdAt: doc.createdAt.toDate(),
     updatedAt: doc.updatedAt.toDate(),
     editedAt: doc.editedAt?.toDate() ?? null,
+    deletedAt: doc.deletedAt?.toDate() ?? null,
     position: {
       seconds: doc.createdAt.seconds,
       nanos: doc.createdAt.nanoseconds,

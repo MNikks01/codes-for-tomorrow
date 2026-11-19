@@ -48,7 +48,7 @@ export function createApp(services: Services, options: AppOptions, logger: Logge
   app.use(
     cors({
       origin: options.corsOrigins.length > 0 ? options.corsOrigins : false,
-      methods: ['GET', 'POST', 'OPTIONS'],
+      methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key', 'X-Request-Id'],
       exposedHeaders: ['X-Request-Id', 'Idempotent-Replayed', 'RateLimit', 'RateLimit-Policy'],
       maxAge: 600,

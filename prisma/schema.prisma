@@ -16,6 +16,11 @@ enum ChatType {
   GROUP
 }
 
+enum MemberRole {
+  OWNER
+  MEMBER
+}
+
 model User {
   id            String         @id @default(uuid()) @db.Uuid
   name          String         @db.VarChar(100)
@@ -33,6 +38,8 @@ model User {
 model Chat {
   id             String       @id @default(uuid()) @db.Uuid
   type           ChatType     @default(DIRECT)
+  /// Display name; required for GROUP chats, always NULL for DIRECT chats (CHECK constraint).
+  name           String?      @db.VarChar(100)
   /// Canonical participant pair "<smallerUuid>:<largerUuid>" for DIRECT chats, NULL otherwise.
   /// The UNIQUE constraint is what makes concurrent create-or-get race free.
   directKey      String?      @unique @map("direct_key") @db.VarChar(73)
@@ -49,12 +56,14 @@ model Chat {
 }
 
 model ChatMember {
-  id       String   @id @default(uuid()) @db.Uuid
-  chatId   String   @map("chat_id") @db.Uuid
-  userId   String   @map("user_id") @db.Uuid
-  joinedAt DateTime @default(now()) @map("joined_at") @db.Timestamptz(3)
-  chat     Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
-  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id       String     @id @default(uuid()) @db.Uuid
+  chatId   String     @map("chat_id") @db.Uuid
+  userId   String     @map("user_id") @db.Uuid
+  /// Groups have exactly one OWNER; DIRECT chat members are all MEMBER.
+  role     MemberRole @default(MEMBER)
+  joinedAt DateTime   @default(now()) @map("joined_at") @db.Timestamptz(3)
+  chat     Chat       @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([chatId, userId])
   @@index([userId, chatId])

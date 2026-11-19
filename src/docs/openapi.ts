@@ -4,8 +4,14 @@ import {
   refreshBodySchema,
   registerBodySchema,
 } from '../modules/auth/auth.schema.js';
-import { createChatBodySchema } from '../modules/chats/chat.schema.js';
 import {
+  addMembersBodySchema,
+  createChatBodySchema,
+  createGroupBodySchema,
+  renameGroupBodySchema,
+} from '../modules/chats/chat.schema.js';
+import {
+  editMessageBodySchema,
   lastSeenBodySchema,
   markReadBodySchema,
   sendMessageBodySchema,
@@ -32,8 +38,16 @@ const tokensDoc = z.object({
 const chatDoc = z.object({
   chatId: z.uuid(),
   type: z.enum(['DIRECT', 'GROUP']),
+  name: z.string().nullable().describe('Group name; null for direct chats'),
   memberIds: z.array(z.uuid()),
-  members: z.array(z.object({ userId: z.uuid(), name: z.string(), joinedAt: isoDate })),
+  members: z.array(
+    z.object({
+      userId: z.uuid(),
+      name: z.string(),
+      role: z.enum(['OWNER', 'MEMBER']),
+      joinedAt: isoDate,
+    }),
+  ),
   lastMessageId: z.string().nullable(),
   lastMessageAt: isoDate.nullable(),
   lastActivityAt: isoDate,
@@ -44,10 +58,11 @@ const messageDoc = z.object({
   id: z.string(),
   chatId: z.uuid(),
   senderId: z.uuid(),
-  text: z.string(),
+  text: z.string().nullable().describe('null when the message was deleted'),
   createdAt: isoDate.describe('Server-generated Firestore timestamp'),
   updatedAt: isoDate,
   editedAt: isoDate.nullable(),
+  deletedAt: isoDate.nullable(),
 });
 const receiptDoc = z.object({
   chatId: z.uuid(),
@@ -214,6 +229,76 @@ export function buildOpenApiDocument(version: string): JsonSchema {
       responses: errorResponses,
     },
     paths: {
+      '/chat/group/create': {
+        post: operation({
+          tag: 'Chats',
+          summary: 'Create a group chat (caller becomes OWNER)',
+          body: createGroupBodySchema,
+          responses: {
+            201: {
+              description: 'Group created',
+              schema: success(schemaOf(z.object({ chatId: z.uuid(), chat: chatDoc }), 'output')),
+            },
+          },
+          errors: [400, 401, 404, 422],
+        }),
+      },
+      '/chat/{chatId}': {
+        patch: operation({
+          tag: 'Chats',
+          summary: 'Rename a group (owner only)',
+          parameters: [chatIdParam],
+          body: renameGroupBodySchema,
+          responses: {
+            200: { description: 'Updated group', schema: success(schemaOf(chatDoc, 'output')) },
+          },
+          errors: [400, 401, 403, 404, 422],
+        }),
+      },
+      '/chat/{chatId}/members': {
+        post: operation({
+          tag: 'Chats',
+          summary: 'Add members to a group (owner only, max 100 members)',
+          parameters: [chatIdParam],
+          body: addMembersBodySchema,
+          responses: {
+            200: { description: 'Updated group', schema: success(schemaOf(chatDoc, 'output')) },
+          },
+          errors: [400, 401, 403, 404, 422],
+        }),
+      },
+      '/chat/{chatId}/members/{userId}': {
+        delete: operation({
+          tag: 'Chats',
+          summary: 'Remove a member (owner) or leave the group (yourself)',
+          description:
+            'When the owner leaves, the earliest-joined member becomes owner. When the last ' +
+            'member leaves, the group is deleted.',
+          parameters: [chatIdParam, pathParam('userId', 'Member UUID', 'uuid')],
+          responses: { 204: { description: 'Removed' } },
+          errors: [400, 401, 403, 404, 422],
+        }),
+      },
+      '/chat/{chatId}/message/{messageId}': {
+        patch: operation({
+          tag: 'Messages',
+          summary: 'Edit your own message',
+          parameters: [chatIdParam, pathParam('messageId', 'Firestore message ID')],
+          body: editMessageBodySchema,
+          responses: {
+            200: { description: 'Edited message', schema: success(schemaOf(messageDoc, 'output')) },
+          },
+          errors: [400, 401, 403, 404, 409, 503],
+        }),
+        delete: operation({
+          tag: 'Messages',
+          summary: 'Delete your own message (soft delete, idempotent)',
+          description: 'The message stays in history as a tombstone with text null.',
+          parameters: [chatIdParam, pathParam('messageId', 'Firestore message ID')],
+          responses: { 204: { description: 'Deleted' } },
+          errors: [400, 401, 403, 404, 503],
+        }),
+      },
       '/auth/register': {
         post: operation({
           tag: 'Auth',
