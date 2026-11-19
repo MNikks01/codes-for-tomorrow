@@ -1,0 +1,14 @@
+node_modules
+dist
+coverage
+.git
+.github
+.husky
+.claude
+docs
+tests
+src/generated
+.env
+.env.*
+*service-account*.json
+*.log

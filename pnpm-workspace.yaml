@@ -1,0 +1,9 @@
+# Only packages that genuinely need install scripts may run them.
+allowBuilds:
+  '@prisma/engines': true
+  prisma: true
+  argon2: true
+  esbuild: true
+  protobufjs: true
+  '@firebase/util': false
+  '@scarf/scarf': false
