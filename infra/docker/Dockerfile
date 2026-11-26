@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # ---- base: pinned Node LTS + pnpm --------------------------------------------
-FROM node:24-bookworm-slim AS base
+FROM node:25-bookworm-slim AS base
 RUN npm install --global pnpm@12.6.0 && npm cache clean --force
 WORKDIR /app
 
@@ -40,7 +40,7 @@ USER node
 CMD ["node_modules/.bin/prisma", "migrate", "deploy"]
 
 # ---- runtime: minimal, non-root, production deps only ------------------------
-FROM node:24-bookworm-slim AS runtime
+FROM node:25-bookworm-slim AS runtime
 # The runtime never uses npm/corepack; removing them drops their bundled CVEs.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends tini \
